@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NEON DINO</title>
+<style>
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #0b0c10;
+    color: #fff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+  }
+  h2 {
+    letter-spacing: 4px;
+    color: #66fcf1;
+    text-shadow: 0 0 10px #45a29e;
+    margin-bottom: 10px;
+  }
+  canvas {
+    background: linear-gradient(180deg, #0b0c10 0%, #1f2833 100%);
+    border-radius: 8px;
+    box-shadow: 0 0 20px rgba(102, 252, 241, 0.2), 0 0 40px rgba(102, 252, 241, 0.1);
+  }
+  .panel {
+    margin-top: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .tips {
+    color: #c5c6c7;
+    font-size: 14px;
+  }
+  kbd {
+    background: #1f2833;
+    padding: 3px 6px;
+    border-radius: 4px;
+    color: #66fcf1;
+    border: 1px solid #45a29e;
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(31, 40, 51, 0.8);
+    padding: 8px 15px;
+    border-radius: 20px;
+    border: 1px solid #45a29e;
+  }
+  .controls span {
+    color: #66fcf1;
+    font-weight: bold;
+    min-width: 30px;
+  }
+  /* 自定义滑杆样式 */
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 150px;
+    background: transparent;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    background: #ff4655;
+    cursor: pointer;
+    margin-top: -6px;
+    box-shadow: 0 0 10px #ff4655;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 4px;
+    cursor: pointer;
+    background: #45a29e;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+  <h2>NEON DINO</h2>
+  <h2>By A1cZheng</h2>
+  <canvas id="gameCanvas" width="800" height="320"></canvas>
+  
+  <div class="panel">
+    <div class="controls">
+      <label for="speedSlider">系统移速:</label>
+      <input type="range" id="speedSlider" min="4" max="15" step="0.5" value="7">
+      <span id="speedVal">7.0</span>
+    </div>
+    <div class="tips">
+      跳跃: <kbd>空格</kbd> / <kbd>↑</kbd> &nbsp;|&nbsp; 下蹲: <kbd>↓</kbd> / <kbd>S</kbd>
+    </div>
+  </div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  
+  const speedSlider = document.getElementById('speedSlider');
+  const speedVal = document.getElementById('speedVal');
+
+  // 游戏全局变量
+  let frames = 0;
+  let score = 0;
+  let gameActive = true;
+  let gameSpeed = parseFloat(speedSlider.value);
+  let pixelSize = 3;
+
+  // 监听滑杆变化
+  speedSlider.addEventListener('input', (e) => {
+    gameSpeed = parseFloat(e.target.value);
+    speedVal.innerText = gameSpeed.toFixed(1);
+  });
+
+  // 更新滑杆UI (当游戏自动加速时)
+  function updateSpeedUI() {
+    speedSlider.value = gameSpeed;
+    speedVal.innerText = gameSpeed.toFixed(1);
+  }
+
+  // ====== 像素画模型库 ======
+  // 机械恐龙 - 站立奔跑
+  const dinoRun1 = [
+    "        ███████ ",
+    "       ██ █████ ",
+    "       ████████ ",
+    "       ████     ",
+    " ██    ███████  ",
+    " ███  ██████    ",
+    " ███████████    ",
+    "  █████████     ",
+    "   ███████      ",
+    "    █████       ",
+    "    █   █       ",
+    "    ██          "
+  ];
+  const dinoRun2 = [
+    "        ███████ ",
+    "       ██ █████ ",
+    "       ████████ ",
+    "       ████     ",
+    " ██    ███████  ",
+    " ███  ██████    ",
+    " ███████████    ",
+    "  █████████     ",
+    "   ███████      ",
+    "    █████       ",
+    "        █       ",
+    "       ██       "
+  ];
+  // 机械恐龙 - 下蹲
+  const dinoDuck1 = [
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "        ███████ ",
+    " ██    ██ █████ ",
+    " ███  █████████ ",
+    " ██████████     ",
+    "  █████████     ",
+    "   ███████      ",
+    "    █   █       ",
+    "    ██          "
+  ];
+  const dinoDuck2 = [
+    "                ",
+    "                ",
+    "                ",
+    "                ",
+    "        ███████ ",
+    " ██    ██ █████ ",
+    " ███  █████████ ",
+    " ██████████     ",
+    "  █████████     ",
+    "   ███████      ",
+    "        █       ",
+    "       ██       "
+  ];
+
+  // 地面障碍物 (能量水晶)
+  const crystalArt = [
+    "      ██      ",
+    "     ████     ",
+    "    ██████    ",
+    "   ████████   ",
+    "  ██████████  ",
+    "   ████████   ",
+    "    ██████    ",
+    "   ████████   ",
+    "    ██████    ",
+    "     ████     ",
+    "      ██      ",
+    "      ██      ",
+    "      ██      ",
+    "      ██      "
+  ];
+
+  // 飞行障碍物 (无人机/机械鸟)
+  const droneArt1 = [
+    "  ██        ██  ",
+    "   ██      ██   ",
+    "  ████████████  ",
+    " ████ ████ ████ ",
+    "████   ██   ████",
+    "       ██       ",
+    "       ██       "
+  ];
+  const droneArt2 = [
+    "████        ████",
+    " ████      ████ ",
+    "  ████████████  ",
+    "   ██ ████ ██   ",
+    "       ██       ",
+    "       ██       ",
+    "                "
+  ];
+
+  function drawPixelArt(art, x, y, color, glowColor) {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = glowColor;
+    for (let row = 0; row < art.length; row++) {
+      for (let col = 0; col < art[row].length; col++) {
+        if (art[row][col] === '█') {
+          ctx.fillRect(x + col * pixelSize, y + row * pixelSize, pixelSize, pixelSize);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // 玩家对象
+  const player = {
+    x: 80,
+    y: 200,
+    width: 16 * pixelSize,
+    height: 12 * pixelSize,
+    dy: 0,
+    jumpForce: 13.5,
+    gravity: 0.75,
+    grounded: true,
+    isDucking: false,
+    trail: [],
+
+    draw() {
+      // 拖尾
+      for (let i = 0; i < this.trail.length; i++) {
+        ctx.globalAlpha = (i + 1) / this.trail.length * 0.3;
+        let trailFrame = this.isDucking ? dinoDuck1 : dinoRun1;
+        drawPixelArt(trailFrame, this.trail[i].x, this.trail[i].y, '#66fcf1', 'transparent');
+      }
+      ctx.globalAlpha = 1;
+
+      // 动画帧
+      let currentFrame;
+      if (this.isDucking) {
+        currentFrame = (frames % 10 < 5) ? dinoDuck1 : dinoDuck2;
+      } else {
+        currentFrame = (!this.grounded) ? dinoRun1 : ((frames % 10 < 5) ? dinoRun2 : dinoRun1);
+      }
+      drawPixelArt(currentFrame, this.x, this.y, '#ffffff', '#66fcf1');
+    },
+
+    update() {
+      this.trail.push({x: this.x, y: this.y});
+      if (this.trail.length > 5) this.trail.shift();
+
+      if (!this.grounded) {
+        this.dy += this.gravity;
+        this.y += this.dy;
+      }
+
+      const groundY = 240;
+      if (this.y + this.height >= groundY) {
+        this.y = groundY - this.height;
+        this.dy = 0;
+        this.grounded = true;
+      } else {
+        this.grounded = false;
+      }
+    },
+
+    jump() {
+      if (this.grounded && !this.isDucking) {
+        this.dy = -this.jumpForce;
+        this.grounded = false;
+      }
+    },
+    
+    // 获取碰撞体积 (下蹲时减小体积)
+    getHitbox() {
+      let pad = 8;
+      if (this.isDucking) {
+        return {
+          x: this.x + pad,
+          y: this.y + 5 * pixelSize, // 下蹲时顶部中空，碰撞箱下移
+          w: this.width - pad * 2,
+          h: 7 * pixelSize 
+        };
+      }
+      return {
+        x: this.x + pad,
+        y: this.y + pad,
+        w: this.width - pad * 2,
+        h: this.height - pad * 2
+      };
+    }
+  };
+
+  const obstacles = [];
+  const particles = [];
+
+  function createParticles(x, y, color) {
+    for (let i = 0; i < 30; i++) {
+      particles.push({
+        x: x, y: y,
+        vx: (Math.random() - 0.5) * 6,
+        vy: (Math.random() - 0.5) * 6,
+        life: 1,
+        color: color
+      });
+    }
+  }
+
+  function handleParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      let p = particles[i];
+      p.x += p.vx - gameSpeed * 0.5;
+      p.y += p.vy;
+      p.life -= 0.03;
+      
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, 3, 3);
+      ctx.globalAlpha = 1;
+
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function handleObstacles() {
+    let lastObs = obstacles[obstacles.length - 1];
+    
+    if (!lastObs || (canvas.width - lastObs.x) > lastObs.nextGap) {
+      let gap = 350 + Math.random() * (250 + gameSpeed * 10); 
+      
+      // 随机生成类型：0 是水晶(地面)，1 是无人机(空中)
+      let isDrone = Math.random() > 0.5;
+      
+      if (!isDrone) {
+        obstacles.push({
+          x: canvas.width,
+          y: 240 - 14 * pixelSize,
+          width: 14 * pixelSize,
+          height: 14 * pixelSize,
+          type: 'crystal',
+          passed: false,
+          nextGap: gap 
+        });
+      } else {
+        // 无人机有两种高度：低空(需跳跃)、高空(需下蹲)
+        let isHigh = Math.random() > 0.5;
+        let yPos = isHigh ? 240 - 21 * pixelSize : 240 - 10 * pixelSize;
+        obstacles.push({
+          x: canvas.width,
+          y: yPos,
+          width: 16 * pixelSize,
+          height: 7 * pixelSize,
+          type: 'drone',
+          passed: false,
+          nextGap: gap 
+        });
+      }
+    }
+
+    for (let i = 0; i < obstacles.length; i++) {
+      let obs = obstacles[i];
+      obs.x -= gameSpeed;
+      
+      // 绘制障碍物
+      if (obs.type === 'crystal') {
+        let pulse = Math.abs(Math.sin(frames * 0.05)) * 0.5 + 0.5;
+        drawPixelArt(crystalArt, obs.x, obs.y + Math.sin(frames * 0.1) * 5, '#ff4655', `rgba(255, 70, 85, ${pulse})`);
+      } else {
+        let currentDroneArt = (frames % 10 < 5) ? droneArt1 : droneArt2;
+        drawPixelArt(currentDroneArt, obs.x, obs.y + Math.sin(frames * 0.2) * 3, '#f5d300', '#f5d300'); // 黄色发光无人机
+      }
+
+      // 精确碰撞检测
+      let pBox = player.getHitbox();
+      let pad = 6; // 障碍物的宽容度
+      let oBox = {
+        x: obs.x + pad,
+        y: obs.y + pad,
+        w: obs.width - pad * 2,
+        h: obs.height - pad * 2
+      };
+
+      if (pBox.x < oBox.x + oBox.w &&
+          pBox.x + pBox.w > oBox.x &&
+          pBox.y < oBox.y + oBox.h &&
+          pBox.y + pBox.h > oBox.y) {
+        gameActive = false;
+        createParticles(player.x + player.width/2, player.y + player.height/2, '#66fcf1');
+        createParticles(obs.x + obs.width/2, obs.y + obs.height/2, obs.type === 'crystal' ? '#ff4655' : '#f5d300');
+      }
+
+      // 计分
+      if (!obs.passed && obs.x + obs.width < player.x) {
+        score++;
+        obs.passed = true;
+        // 每15分自动加速，并更新滑杆UI
+        if (score > 0 && score % 15 === 0 && gameSpeed < 15) {
+          gameSpeed += 0.5;
+          updateSpeedUI();
+        }
+      }
+    }
+
+    if (obstacles.length > 0 && obstacles[0].x + obstacles[0].width < -100) {
+      obstacles.shift();
+    }
+  }
+
+  const buildings = [];
+  for(let i=0; i<20; i++) {
+    buildings.push({
+      x: i * 60,
+      width: 40 + Math.random() * 30,
+      height: 50 + Math.random() * 100
+    });
+  }
+
+  function drawEnvironment() {
+    ctx.fillStyle = '#1f2833';
+    buildings.forEach(b => {
+      b.x -= gameSpeed * 0.2; 
+      if(b.x + b.width < 0) { b.x = canvas.width; b.height = 50 + Math.random() * 100; }
+      ctx.fillRect(b.x, 240 - b.height, b.width, b.height);
+    });
+
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#66fcf1';
+    ctx.strokeStyle = '#45a29e';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 240);
+    ctx.lineTo(canvas.width, 240);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#45a29e';
+    for (let i = 0; i < 5; i++) {
+      let lineX = (frames * gameSpeed * 1.5 + i * 200) % canvas.width;
+      ctx.fillRect(canvas.width - lineX, 245 + (i%3)*10, 40, 2);
+    }
+  }
+
+  function drawScore() {
+    ctx.fillStyle = '#66fcf1';
+    ctx.font = 'bold 22px "Segoe UI"';
+    ctx.fillText(`SCORE: ${score}`, canvas.width - 140, 40);
+  }
+
+  function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawEnvironment();
+
+    if (gameActive) {
+      player.update();
+      handleObstacles();
+      frames++;
+    } else {
+      ctx.fillStyle = 'rgba(11, 12, 16, 0.7)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ff4655';
+      ctx.font = 'bold 45px "Segoe UI"';
+      ctx.textAlign = 'center';
+      ctx.fillText('CRITICAL HIT', canvas.width/2, canvas.height/2 - 10);
+      ctx.fillStyle = '#c5c6c7';
+      ctx.font = '18px "Segoe UI"';
+      ctx.fillText('PRESS SPACE TO RESTART', canvas.width/2, canvas.height/2 + 30);
+      ctx.textAlign = 'left';
+    }
+
+    if (gameActive) player.draw();
+    if (!gameActive) {
+       obstacles.forEach(obs => {
+         if (obs.type === 'crystal') {
+           drawPixelArt(crystalArt, obs.x, obs.y + Math.sin(frames * 0.1) * 5, '#ff4655', 'transparent');
+         } else {
+           drawPixelArt(droneArt1, obs.x, obs.y, '#f5d300', 'transparent');
+         }
+       });
+    }
+    
+    handleParticles();
+    drawScore();
+    
+    requestAnimationFrame(loop);
+  }
+
+  // 按键逻辑处理
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+      e.preventDefault(); 
+      if (!gameActive) {
+        // 重启游戏
+        gameActive = true;
+        obstacles.length = 0;
+        particles.length = 0;
+        player.trail = [];
+        score = 0;
+        frames = 0;
+        player.y = 200;
+        player.dy = 0;
+        // 如果想要死亡后重置速度，取消注释下方两行：
+        // gameSpeed = 7; 
+        // updateSpeedUI();
+      } else {
+        player.jump();
+      }
+    }
+    
+    // 下蹲
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      e.preventDefault();
+      if (player.grounded) {
+        player.isDucking = true;
+      }
+    }
+  });
+
+  // 释放按键取消下蹲
+  document.addEventListener('keyup', (e) => {
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      player.isDucking = false;
+    }
+  });
+
+  // 避免在调整滑杆时触发空格键跳跃
+  speedSlider.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+      e.preventDefault();
+    }
+  });
+
+  loop();
+</script>
+</body>
+</html>

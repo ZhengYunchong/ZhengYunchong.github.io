@@ -1,0 +1,807 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中国象棋 · 增强AI</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:'PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;background:#1a1a2e;color:#eee}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:10px;gap:12px}
+.top-bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:center}
+.top-bar h1{font-size:1.4rem;letter-spacing:2px;color:#f5e6c8}
+.mode-btn{
+  padding:6px 18px;border:2px solid #f5e6c8;border-radius:20px;
+  background:transparent;color:#f5e6c8;font-size:.85rem;cursor:pointer;
+  transition:.2s;font-weight:600;
+}
+.mode-btn:hover,.mode-btn.active{background:#f5e6c8;color:#1a1a2e}
+.ctrl-btn{
+  padding:6px 14px;border:2px solid #7f8c8d;border-radius:16px;
+  background:transparent;color:#bdc3c7;font-size:.8rem;cursor:pointer;transition:.2s;
+}
+.ctrl-btn:hover{background:#7f8c8d;color:#1a1a2e}
+.info-bar{
+  display:flex;align-items:center;gap:12px;
+  font-size:.95rem;min-height:28px;color:#f5e6c8;
+}
+.turn-indicator{
+  width:18px;height:18px;border-radius:50%;border:2px solid #f5e6c8;display:inline-block;
+}
+.turn-red{background:#c0392b}
+.turn-black{background:#1a1a2e}
+.board-wrap{
+  position:relative;
+  --cell:clamp(36px,8.5vmin,62px);
+  --pad:calc(var(--cell)*.55);
+  width:calc(var(--cell)*8 + var(--pad)*2);
+  height:calc(var(--cell)*9 + var(--pad)*2);
+}
+canvas#board{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,.5);
+  cursor:pointer;
+}
+.overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:100;
+}
+.overlay.show{display:flex}
+.dialog{
+  background:#2c2c3e;border-radius:16px;padding:32px 40px;text-align:center;
+  box-shadow:0 12px 40px rgba(0,0,0,.5);max-width:340px;
+}
+.dialog h2{font-size:1.5rem;margin-bottom:12px;color:#f5e6c8}
+.dialog p{color:#bdc3c7;margin-bottom:20px}
+.dialog button{
+  padding:10px 28px;border:none;border-radius:20px;font-size:1rem;
+  cursor:pointer;font-weight:600;margin:4px;
+}
+.dialog .btn-primary{background:#c0392b;color:#fff}
+.dialog .btn-secondary{background:#555;color:#ddd}
+@media(max-width:480px){
+  .top-bar h1{font-size:1.1rem}
+  .mode-btn{padding:4px 12px;font-size:.78rem}
+  .board-wrap{--cell:clamp(32px,10vw,48px)}
+}
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <h1>🀄 中国象棋</h1>
+  <button class="mode-btn active" id="btnPvP" onclick="setMode('pvp')">👥 双人对战</button>
+  <button class="mode-btn" id="btnPvE" onclick="setMode('pve')">🤖 人机对战</button>
+  <button class="ctrl-btn" onclick="undoMove()">↩ 悔棋</button>
+  <button class="ctrl-btn" onclick="restartGame()">🔄 新局</button>
+</div>
+
+<div class="info-bar">
+  <span class="turn-indicator" id="turnDot"></span>
+  <span id="statusText">红方先行</span>
+</div>
+
+<div class="board-wrap" id="boardWrap">
+  <canvas id="board"></canvas>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="dialog">
+    <h2 id="dialogTitle">游戏结束</h2>
+    <p id="dialogMsg"></p>
+    <button class="btn-primary" onclick="restartGame();closeDialog()">再来一局</button>
+    <button class="btn-secondary" onclick="closeDialog()">关闭</button>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════
+   CONSTANTS
+   ═══════════════════════════════════════════ */
+var ROWS=10, COLS=9;
+var RED='r', BLACK='b';
+var SEARCH_DEPTH=3;   // 搜索深度：3 层（流畅且棋力较强，可自行改为 2 或 4）
+var NAMES={
+  r_k:'帥',r_a:'仕',r_b:'相',r_n:'馬',r_r:'車',r_c:'炮',r_p:'兵',
+  b_k:'將',b_a:'士',b_b:'象',b_n:'馬',b_r:'車',b_c:'炮',b_p:'卒'
+};
+var INIT=[
+  [0,0,'b_r'],[0,1,'b_n'],[0,2,'b_b'],[0,3,'b_a'],[0,4,'b_k'],[0,5,'b_a'],[0,6,'b_b'],[0,7,'b_n'],[0,8,'b_r'],
+  [2,1,'b_c'],[2,7,'b_c'],
+  [3,0,'b_p'],[3,2,'b_p'],[3,4,'b_p'],[3,6,'b_p'],[3,8,'b_p'],
+  [9,0,'r_r'],[9,1,'r_n'],[9,2,'r_b'],[9,3,'r_a'],[9,4,'r_k'],[9,5,'r_a'],[9,6,'r_b'],[9,7,'r_n'],[9,8,'r_r'],
+  [7,1,'r_c'],[7,7,'r_c'],
+  [6,0,'r_p'],[6,2,'r_p'],[6,4,'r_p'],[6,6,'r_p'],[6,8,'r_p']
+];
+
+// 基础子力价值
+var PIECE_VAL={k:10000,a:20,b:20,n:40,r:90,c:45,p:10};
+
+// 位置价值表 (10行×9列)
+var POS_VAL={
+  p: [
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [5,8,8,6,10,6,8,8,5],
+    [10,15,15,10,16,10,15,15,10],
+    [15,20,20,15,25,15,20,20,15],
+    [18,25,25,20,30,20,25,25,18],
+    [18,25,25,20,30,20,25,25,18],
+    [0,0,0,0,0,0,0,0,0]
+  ],
+  r: [
+    [14,14,12,18,16,18,12,14,14],
+    [16,20,18,24,26,24,18,20,16],
+    [12,14,14,18,18,18,14,14,12],
+    [12,18,16,22,22,22,16,18,12],
+    [12,14,12,18,20,18,12,14,12],
+    [12,14,12,18,20,18,12,14,12],
+    [8,10,8,14,14,14,8,10,8],
+    [8,8,6,12,12,12,6,8,8],
+    [6,8,6,12,12,12,6,8,8],
+    [4,6,4,10,10,10,4,6,4]
+  ],
+  n: [
+    [4,8,10,12,12,12,10,8,4],
+    [6,12,14,16,16,16,14,12,6],
+    [8,14,16,20,20,20,16,14,8],
+    [10,16,20,24,24,24,20,16,10],
+    [8,14,16,20,20,20,16,14,8],
+    [6,12,14,16,16,16,14,12,6],
+    [4,8,10,12,12,12,10,8,4],
+    [2,6,8,10,10,10,8,6,2],
+    [0,4,6,8,8,8,6,4,0],
+    [0,2,4,6,6,6,4,2,0]
+  ],
+  c: [
+    [6,8,8,10,12,10,8,8,6],
+    [6,8,8,12,14,12,8,8,6],
+    [6,8,8,10,12,10,8,8,6],
+    [6,8,8,10,12,10,8,8,6],
+    [4,6,6,8,10,8,6,6,4],
+    [4,6,6,8,10,8,6,6,4],
+    [4,6,6,8,8,8,6,6,4],
+    [4,4,4,6,6,6,4,4,4],
+    [2,4,4,6,6,6,4,4,2],
+    [2,2,2,4,4,4,2,2,2]
+  ],
+  b: [
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,2,4,0,4,2,0,0],
+    [0,0,4,6,0,6,4,0,0],
+    [0,0,0,4,0,4,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0]
+  ],
+  a: [
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,1,2,1,0,0,0],
+    [0,0,0,2,4,2,0,0,0],
+    [0,0,0,1,2,1,0,0,0]
+  ],
+  k: [
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0,0],
+    [0,0,0,1,2,1,0,0,0],
+    [0,0,0,2,4,2,0,0,0],
+    [0,0,0,1,2,1,0,0,0]
+  ]
+};
+
+/* ═══════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════ */
+var board=[], pieces={}, turn=RED, selected=null;
+var mode='pvp', aiSide=BLACK, moveHistory=[];
+var gameOver=false, lastMove=null;
+
+/* ═══════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════ */
+function initBoard(){
+  board=[];
+  for(var r=0;r<ROWS;r++){board[r]=[];for(var c=0;c<COLS;c++)board[r][c]=null;}
+  pieces={};
+  for(var i=0;i<INIT.length;i++){
+    var rc=INIT[i], r=rc[0], c=rc[1], type=rc[2];
+    var key=type+'_'+i;
+    pieces[key]={type:type,row:r,col:c,alive:true};
+    board[r][c]=key;
+  }
+  turn=RED; selected=null; moveHistory=[]; gameOver=false; lastMove=null;
+}
+
+/* ═══════════════════════════════════════════
+   RENDER — ALL on canvas
+   ═══════════════════════════════════════════ */
+var canvas=document.getElementById('board');
+var ctx=canvas.getContext('2d');
+var wrap=document.getElementById('boardWrap');
+var cellSize, padX, padY;
+
+function getCell(){
+  var cs=wrap.currentStyle||getComputedStyle(wrap);
+  var v=cs.getPropertyValue('--cell');
+  if(v&&v.indexOf('clamp')===-1){var n=parseFloat(v);if(n>0)return n;}
+  var w=parseFloat(cs.width);
+  return w/9.1;
+}
+
+function resize(){
+  var cs=getComputedStyle(wrap);
+  var w=parseFloat(cs.width), h=parseFloat(cs.height);
+  var dpr=window.devicePixelRatio||1;
+  canvas.width=w*dpr; canvas.height=h*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  cellSize=getCell();
+  padX=cellSize*.55; padY=cellSize*.55;
+  drawAll();
+}
+
+function drawAll(){
+  var W=canvas.width/(window.devicePixelRatio||1);
+  var H=canvas.height/(window.devicePixelRatio||1);
+  ctx.clearRect(0,0,W,H);
+  drawBoard(W,H);
+  drawPieces();
+}
+
+function drawBoard(W,H){
+  ctx.fillStyle='#e8c170';
+  ctx.fillRect(0,0,W,H);
+  ctx.save(); ctx.globalAlpha=.08;
+  for(var i=0;i<30;i++){
+    ctx.beginPath();
+    ctx.moveTo(0,i*H/30+Math.sin(i)*8);
+    ctx.bezierCurveTo(W*.3,i*H/30+12,W*.7,i*H/30-12,W,i*H/30+Math.sin(i+1)*8);
+    ctx.strokeStyle='#5a3a1a'; ctx.lineWidth=3; ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.strokeStyle='#5a3a1a'; ctx.lineWidth=1.5;
+  var x0=padX, y0=padY;
+  for(var r=0;r<ROWS;r++){
+    ctx.beginPath(); ctx.moveTo(x0,y0+r*cellSize); ctx.lineTo(x0+8*cellSize,y0+r*cellSize); ctx.stroke();
+  }
+  for(var c=0;c<COLS;c++){
+    if(c===0||c===8){
+      ctx.beginPath(); ctx.moveTo(x0+c*cellSize,y0); ctx.lineTo(x0+c*cellSize,y0+9*cellSize); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(x0+c*cellSize,y0); ctx.lineTo(x0+c*cellSize,y0+4*cellSize); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0+c*cellSize,y0+5*cellSize); ctx.lineTo(x0+c*cellSize,y0+9*cellSize); ctx.stroke();
+    }
+  }
+  var pals=[[0,3,1,4],[0,5,1,4],[8,3,9,4],[8,5,9,4]];
+  for(var i=0;i<pals.length;i++){
+    var p=pals[i];
+    ctx.beginPath(); ctx.moveTo(x0+p[1]*cellSize,y0+p[0]*cellSize); ctx.lineTo(x0+p[3]*cellSize,y0+p[2]*cellSize); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0+(8-p[1])*cellSize,y0+p[0]*cellSize); ctx.lineTo(x0+(8-p[3])*cellSize,y0+p[2]*cellSize); ctx.stroke();
+  }
+  ctx.strokeStyle='#3a2a0a'; ctx.lineWidth=3;
+  ctx.strokeRect(x0-4,y0-4,8*cellSize+8,9*cellSize+8);
+  ctx.fillStyle='#5a3a1a';
+  ctx.font='bold '+cellSize*.42+'px KaiTi,STKaiti,FangSong,SimSun,serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('楚  河',x0+2*cellSize,y0+4.5*cellSize);
+  ctx.fillText('漢  界',x0+6*cellSize,y0+4.5*cellSize);
+  var marks=[[2,1],[2,7],[3,0],[3,2],[3,4],[3,6],[3,8],[6,0],[6,2],[6,4],[6,6],[6,8],[7,1],[7,7]];
+  for(var i=0;i<marks.length;i++){
+    var mr=marks[i][0], mc=marks[i][1];
+    var cx=x0+mc*cellSize, cy=y0+mr*cellSize;
+    var ml=cellSize*.12;
+    var sides=mc===0?[[1,1],[1,-1]]:mc===8?[[-1,1],[-1,-1]]:[[1,1],[1,-1],[-1,1],[-1,-1]];
+    for(var j=0;j<sides.length;j++){
+      var sx=sides[j][0],sy=sides[j][1];
+      ctx.beginPath();
+      ctx.moveTo(cx+sx*ml*2,cy+sy*ml);
+      ctx.lineTo(cx+sx*ml,cy+sy*ml);
+      ctx.lineTo(cx+sx*ml,cy+sy*ml*2);
+      ctx.strokeStyle='#5a3a1a'; ctx.lineWidth=1; ctx.stroke();
+    }
+  }
+}
+
+function drawPieces(){
+  var r,c,keys=Object.keys(pieces);
+  for(var i=0;i<keys.length;i++){
+    var k=keys[i], p=pieces[k];
+    if(!p.alive) continue;
+    r=p.row; c=p.col;
+    var cx=padX+c*cellSize, cy=padY+r*cellSize;
+    var rad=cellSize*.42;
+    var isRed=p.type[0]===RED;
+    var isSelected=(k===selected);
+
+    ctx.save();
+    ctx.shadowColor='rgba(0,0,0,.35)'; ctx.shadowBlur=8; ctx.shadowOffsetX=2; ctx.shadowOffsetY=3;
+    ctx.beginPath(); ctx.arc(cx,cy,rad,0,Math.PI*2);
+    var grad=ctx.createRadialGradient(cx-rad*.3,cy-rad*.3,rad*.1,cx,cy,rad);
+    grad.addColorStop(0,'#fff8e8'); grad.addColorStop(1,'#f5e6c8');
+    ctx.fillStyle=grad; ctx.fill();
+    ctx.restore();
+
+    ctx.beginPath(); ctx.arc(cx,cy,rad,0,Math.PI*2);
+    ctx.lineWidth=3;
+    ctx.strokeStyle=isSelected?'#f1c40f':(isRed?'#a02020':'#333');
+    ctx.stroke();
+
+    ctx.beginPath(); ctx.arc(cx,cy,rad*.82,0,Math.PI*2);
+    ctx.lineWidth=1.5;
+    ctx.strokeStyle=isRed?'rgba(160,32,32,.4)':'rgba(51,51,51,.4)';
+    ctx.stroke();
+
+    ctx.fillStyle=isRed?'#d42a2a':'#111';
+    ctx.font='bold '+cellSize*.40+'px KaiTi,STKaiti,FangSong,SimSun,serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(NAMES[p.type],cx,cy+1);
+
+    if(isSelected){
+      ctx.beginPath(); ctx.arc(cx,cy,rad+3,0,Math.PI*2);
+      ctx.lineWidth=3; ctx.strokeStyle='rgba(241,196,15,.7)'; ctx.stroke();
+    }
+  }
+
+  if(lastMove){
+    ctx.save(); ctx.globalAlpha=.35;
+    ctx.fillStyle='#2ecc71';
+    var lx=padX+lastMove.fromC*cellSize, ly=padY+lastMove.fromR*cellSize;
+    ctx.beginPath(); ctx.arc(lx,ly,cellSize*.15,0,Math.PI*2); ctx.fill();
+    lx=padX+lastMove.toC*cellSize; ly=padY+lastMove.toR*cellSize;
+    ctx.beginPath(); ctx.arc(lx,ly,cellSize*.15,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* ═══════════════════════════════════════════
+   MOVE LOGIC
+   ═══════════════════════════════════════════ */
+function side(type){return type[0]}
+function inBoard(r,c){return r>=0&&r<ROWS&&c>=0&&c<COLS}
+
+function getValidMoves(key){
+  var p=pieces[key]; if(!p||!p.alive) return [];
+  var s=side(p.type), moves=[];
+  var t=p.type.slice(2);
+  var r=p.row, c=p.col;
+
+  function add(tr,tc){
+    if(!inBoard(tr,tc)) return false;
+    var occ=board[tr][tc];
+    if(occ&&side(pieces[occ].type)===s) return false;
+    moves.push([tr,tc]); return !occ;
+  }
+
+  var i,dr,dc,tr,tc;
+  if(t==='r'){
+    var dirs=[[-1,0],[1,0],[0,-1],[0,1]];
+    for(i=0;i<4;i++){dr=dirs[i][0];dc=dirs[i][1];for(var n=1;n<9;n++){if(!add(r+dr*n,c+dc*n))break;}}
+  } else if(t==='n'){
+    var nm=[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+    for(i=0;i<8;i++){
+      dr=nm[i][0]; dc=nm[i][1];
+      var br=Math.abs(dr)===2?r+dr/2:r;
+      var bc=Math.abs(dc)===2?c+dc/2:c;
+      if(board[br]&&board[br][bc]) continue;
+      add(r+dr,c+dc);
+    }
+  } else if(t==='b'){
+    var bm=[[-2,-2],[-2,2],[2,-2],[2,2]];
+    for(i=0;i<4;i++){
+      dr=bm[i][0]; dc=bm[i][1];
+      var er=r+dr/2, ec=c+dc/2;
+      if(board[er]&&board[er][ec]) continue;
+      tr=r+dr; tc=c+dc;
+      if(s===RED&&tr<5) continue;
+      if(s===BLACK&&tr>4) continue;
+      add(tr,tc);
+    }
+  } else if(t==='a'){
+    var am=[[-1,-1],[-1,1],[1,-1],[1,1]];
+    for(i=0;i<4;i++){
+      dr=am[i][0]; dc=am[i][1];
+      tr=r+dr; tc=c+dc;
+      if(s===RED&&(tr<7||tc<3||tc>5)) continue;
+      if(s===BLACK&&(tr>2||tc<3||tc>5)) continue;
+      add(tr,tc);
+    }
+  } else if(t==='k'){
+    var km=[[-1,0],[1,0],[0,-1],[0,1]];
+    for(i=0;i<4;i++){
+      dr=km[i][0]; dc=km[i][1];
+      tr=r+dr; tc=c+dc;
+      if(s===RED&&(tr<7||tc<3||tc>5)) continue;
+      if(s===BLACK&&(tr>2||tc<3||tc>5)) continue;
+      add(tr,tc);
+    }
+    var oppKey=null;
+    var oks=Object.keys(pieces);
+    for(i=0;i<oks.length;i++){var pp=pieces[oks[i]];if(pp.alive&&pp.type===(s===RED?'b_k':'r_k')){oppKey=oks[i];break;}}
+    if(oppKey){
+      var op=pieces[oppKey];
+      if(op.col===c){
+        var blocked=false;
+        var minR=Math.min(r,op.row), maxR=Math.max(r,op.row);
+        for(var ii=minR+1;ii<maxR;ii++){if(board[ii][c]){blocked=true;break;}}
+        if(!blocked) moves.push([op.row,op.col]);
+      }
+    }
+  } else if(t==='c'){
+    var cdirs=[[-1,0],[1,0],[0,-1],[0,1]];
+    for(i=0;i<4;i++){
+      dr=cdirs[i][0]; dc=cdirs[i][1];
+      var jumped=false;
+      for(var n=1;n<9;n++){
+        tr=r+dr*n; tc=c+dc*n;
+        if(!inBoard(tr,tc)) break;
+        var occ=board[tr][tc];
+        if(!jumped){
+          if(occ) jumped=true;
+          else moves.push([tr,tc]);
+        } else {
+          if(occ){if(side(pieces[occ].type)!==s) moves.push([tr,tc]);break;}
+        }
+      }
+    }
+  } else if(t==='p'){
+    if(s===RED){
+      if(r>4) add(r-1,c);
+      if(r<=4){add(r-1,c);add(r,c-1);add(r,c+1);}
+    } else {
+      if(r<5) add(r+1,c);
+      if(r>=5){add(r+1,c);add(r,c-1);add(r,c+1);}
+    }
+  }
+  var res=[];
+  for(i=0;i<moves.length;i++){if(inBoard(moves[i][0],moves[i][1]))res.push(moves[i]);}
+  return res;
+}
+
+function isInCheck(s){
+  var king=null,oks=Object.keys(pieces);
+  for(var i=0;i<oks.length;i++){if(pieces[oks[i]].alive&&pieces[oks[i]].type===s+'_k'){king=pieces[oks[i]];break;}}
+  if(!king) return false;
+  var opp=s===RED?BLACK:RED;
+  for(var i=0;i<oks.length;i++){
+    var p=pieces[oks[i]];
+    if(!p.alive||side(p.type)!==opp) continue;
+    var ms=getValidMoves(oks[i]);
+    for(var j=0;j<ms.length;j++){if(ms[j][0]===king.row&&ms[j][1]===king.col) return true;}
+  }
+  return false;
+}
+
+function makeMove(key,tr,tc){
+  var p=pieces[key];
+  var cap=board[tr][tc];
+  board[p.row][p.col]=null;
+  board[tr][tc]=key;
+  p.row=tr; p.col=tc;
+  if(cap) pieces[cap].alive=false;
+  return cap;
+}
+
+function isCheckmate(s){
+  var oks=Object.keys(pieces);
+  for(var i=0;i<oks.length;i++){
+    var p=pieces[oks[i]];
+    if(!p.alive||side(p.type)!==s) continue;
+    var ms=getValidMoves(oks[i]);
+    for(var j=0;j<ms.length;j++){
+      var tr=ms[j][0],tc=ms[j][1];
+      var savedR=p.row,savedC=p.col;
+      var cap=board[tr][tc];
+      var capP=cap?pieces[cap]:null;
+      board[savedR][savedC]=null; board[tr][tc]=oks[i];
+      p.row=tr;p.col=tc;
+      if(capP) capP.alive=false;
+      var safe=!isInCheck(s);
+      board[tr][tc]=cap||null; board[savedR][savedC]=oks[i];
+      p.row=savedR;p.col=savedC;
+      if(capP) capP.alive=true;
+      if(safe) return false;
+    }
+  }
+  return true;
+}
+
+/* ═══════════════════════════════════════════
+   INTERACTION
+   ═══════════════════════════════════════════ */
+canvas.addEventListener('click',function(e){
+  if(gameOver) return;
+  if(mode==='pve'&&turn===aiSide) return;
+
+  var rect=canvas.getBoundingClientRect();
+  var mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  var col=Math.round((mx-padX)/cellSize);
+  var row=Math.round((my-padY)/cellSize);
+  if(!inBoard(row,col)) return;
+
+  var clicked=board[row][col];
+
+  if(!selected){
+    if(clicked&&side(pieces[clicked].type)===turn){
+      selected=clicked;
+    }
+  } else {
+    if(clicked&&side(pieces[clicked].type)===turn){
+      selected=clicked;
+    } else {
+      tryMoveAt(row,col);
+    }
+  }
+  drawAll();
+  updateStatus('');
+});
+
+function tryMoveAt(tr,tc){
+  var key=selected, p=pieces[key];
+  var moves=getValidMoves(key);
+  var valid=false;
+  for(var i=0;i<moves.length;i++){if(moves[i][0]===tr&&moves[i][1]===tc){valid=true;break;}}
+  if(!valid) return false;
+
+  var savedR=p.row,savedC=p.col;
+  var cap=board[tr][tc], capP=cap?pieces[cap]:null;
+  board[savedR][savedC]=null; board[tr][tc]=key;
+  p.row=tr;p.col=tc;
+  if(capP) capP.alive=false;
+  var selfCheck=isInCheck(side(p.type));
+  if(selfCheck){
+    board[tr][tc]=cap||null; board[savedR][savedC]=key;
+    p.row=savedR;p.col=savedC;
+    if(capP) capP.alive=true;
+    return false;
+  }
+  board[tr][tc]=cap||null; board[savedR][savedC]=key;
+  p.row=savedR;p.col=savedC;
+  if(capP) capP.alive=true;
+
+  var captured=makeMove(key,tr,tc);
+  moveHistory.push({key:key,fromR:savedR,fromC:savedC,toR:tr,toC:tc,captured:captured});
+  lastMove={fromR:savedR,fromC:savedC,toR:tr,toC:tc};
+  selected=null;
+
+  var opp=turn===RED?BLACK:RED;
+  if(captured&&pieces[captured].type.indexOf('_k')!==-1){
+    gameOver=true;
+    showDialog('将军！',(turn===RED?'红方':'黑方')+'获胜！');
+  } else if(isCheckmate(opp)){
+    gameOver=true;
+    showDialog('绝杀！',(turn===RED?'红方':'黑方')+'获胜！');
+  }
+  turn=opp;
+  drawAll();
+  updateTurnDot();
+
+  if(!gameOver&&mode==='pve'&&turn===aiSide){
+    // 显示“AI 思考中…”后调用 AI
+    document.getElementById('statusText').textContent = 'AI 思考中…';
+    setTimeout(function(){
+      aiMove();
+      drawAll();
+      updateTurnDot();
+      updateStatus('');
+    }, 50);
+  }
+  return true;
+}
+
+/* ═══════════════════════════════════════════
+   UNDO
+   ═══════════════════════════════════════════ */
+function undoMove(){
+  if(moveHistory.length===0||gameOver) return;
+  var count=mode==='pve'?Math.min(2,moveHistory.length):1;
+  for(var i=0;i<count;i++){
+    var m=moveHistory.pop();
+    var p=pieces[m.key];
+    board[m.toR][m.toC]=null;
+    board[m.fromR][m.fromC]=m.key;
+    p.row=m.fromR; p.col=m.fromC;
+    if(m.captured){
+      pieces[m.captured].alive=true;
+      board[m.toR][m.toC]=m.captured;
+    }
+    turn=side(p.type);
+  }
+  selected=null;
+  if(moveHistory.length>0){
+    var lm=moveHistory[moveHistory.length-1];
+    lastMove={fromR:lm.fromR,fromC:lm.fromC,toR:lm.toR,toC:lm.toC};
+  } else {
+    lastMove=null;
+  }
+  drawAll(); updateTurnDot(); updateStatus('');
+}
+
+/* ═══════════════════════════════════════════
+   AI (ENHANCED)
+   ═══════════════════════════════════════════ */
+
+function boardScore(s){
+  var score=0, oks=Object.keys(pieces);
+  for(var i=0;i<oks.length;i++){
+    var p=pieces[oks[i]]; if(!p.alive) continue;
+    var type = p.type[2];
+    var val = PIECE_VAL[type] || 0;
+    var posTable = POS_VAL[type];
+    if(posTable){
+      var r = p.row, c = p.col;
+      var rowIdx = side(p.type) === RED ? r : (9 - r);
+      val += posTable[rowIdx][c] * 0.8;
+    }
+    score += (side(p.type) === s ? 1 : -1) * val;
+  }
+  return score;
+}
+
+function allMoves(s){
+  var moves=[], oks=Object.keys(pieces);
+  for(var i=0;i<oks.length;i++){
+    var p=pieces[oks[i]];
+    if(!p.alive||side(p.type)!==s) continue;
+    var ms=getValidMoves(oks[i]);
+    for(var j=0;j<ms.length;j++){
+      var tr=ms[j][0],tc=ms[j][1];
+      var savedR=p.row,savedC=p.col;
+      var cap=board[tr][tc], capP=cap?pieces[cap]:null;
+      board[savedR][savedC]=null; board[tr][tc]=oks[i];
+      p.row=tr;p.col=tc;
+      if(capP) capP.alive=false;
+      var legal=!isInCheck(s);
+      board[tr][tc]=cap||null; board[savedR][savedC]=oks[i];
+      p.row=savedR;p.col=savedC;
+      if(capP) capP.alive=true;
+      if(legal) moves.push({key:oks[i],fromR:savedR,fromC:savedC,toR:tr,toC:tc,captured:cap});
+    }
+  }
+  moves.sort(function(a,b){
+    var sa=0, sb=0;
+    if(a.captured){
+      var attackerVal = PIECE_VAL[pieces[a.key].type[2]] || 0;
+      var victimVal = PIECE_VAL[pieces[a.captured].type[2]] || 0;
+      sa = victimVal * 10 - attackerVal;
+    }
+    if(b.captured){
+      var attackerVal = PIECE_VAL[pieces[b.key].type[2]] || 0;
+      var victimVal = PIECE_VAL[pieces[b.captured].type[2]] || 0;
+      sb = victimVal * 10 - attackerVal;
+    }
+    return sb - sa;
+  });
+  return moves;
+}
+
+function minimax(depth, alpha, beta, isMax, aiS){
+  if(depth === 0) return boardScore(aiS);
+  var s = isMax ? aiS : (aiS === RED ? BLACK : RED);
+  var moves = allMoves(s);
+  if(moves.length === 0) return isMax ? -99999 : 99999;
+
+  var i, m, p, savedR, savedC, cap, capP, val;
+  if(isMax){
+    var best = -Infinity;
+    for(i=0; i<moves.length; i++){
+      m = moves[i]; p = pieces[m.key]; savedR = p.row; savedC = p.col;
+      cap = board[m.toR][m.toC]; capP = cap ? pieces[cap] : null;
+      board[savedR][savedC] = null; board[m.toR][m.toC] = m.key;
+      p.row = m.toR; p.col = m.toC;
+      if(capP) capP.alive = false;
+      val = minimax(depth-1, alpha, beta, false, aiS);
+      board[m.toR][m.toC] = cap || null; board[savedR][savedC] = m.key;
+      p.row = savedR; p.col = savedC;
+      if(capP) capP.alive = true;
+      if(val > best) best = val;
+      if(val > alpha) alpha = val;
+      if(beta <= alpha) break;
+    }
+    return best;
+  } else {
+    var best = Infinity;
+    for(i=0; i<moves.length; i++){
+      m = moves[i]; p = pieces[m.key]; savedR = p.row; savedC = p.col;
+      cap = board[m.toR][m.toC]; capP = cap ? pieces[cap] : null;
+      board[savedR][savedC] = null; board[m.toR][m.toC] = m.key;
+      p.row = m.toR; p.col = m.toC;
+      if(capP) capP.alive = false;
+      val = minimax(depth-1, alpha, beta, true, aiS);
+      board[m.toR][m.toC] = cap || null; board[savedR][savedC] = m.key;
+      p.row = savedR; p.col = savedC;
+      if(capP) capP.alive = true;
+      if(val < best) best = val;
+      if(val < beta) beta = val;
+      if(beta <= alpha) break;
+    }
+    return best;
+  }
+}
+
+function aiMove(){
+  if(gameOver) return;
+  var s = aiSide;
+  var moves = allMoves(s);
+  if(moves.length === 0) return;
+  var bestMove = null, bestScore = -Infinity;
+  for(var i=0; i<moves.length; i++){
+    var m = moves[i], p = pieces[m.key], savedR = p.row, savedC = p.col;
+    var cap = board[m.toR][m.toC], capP = cap ? pieces[cap] : null;
+    board[savedR][savedC] = null; board[m.toR][m.toC] = m.key;
+    p.row = m.toR; p.col = m.toC;
+    if(capP) capP.alive = false;
+    var score = minimax(SEARCH_DEPTH, -Infinity, Infinity, false, s);
+    board[m.toR][m.toC] = cap || null; board[savedR][savedC] = m.key;
+    p.row = savedR; p.col = savedC;
+    if(capP) capP.alive = true;
+    var jitter = (Math.random() - 0.5) * 2;
+    if(score + jitter > bestScore) { bestScore = score + jitter; bestMove = m; }
+  }
+  if(bestMove){
+    selected = bestMove.key;
+    tryMoveAt(bestMove.toR, bestMove.toC);
+  }
+}
+
+/* ═══════════════════════════════════════════
+   UI HELPERS
+   ═══════════════════════════════════════════ */
+function updateTurnDot(){
+  var dot=document.getElementById('turnDot');
+  dot.className='turn-indicator '+(turn===RED?'turn-red':'turn-black');
+}
+
+function updateStatus(extra){
+  var el=document.getElementById('statusText');
+  var tn=turn===RED?'红方':'黑方';
+  var ck=isInCheck(turn)?' ⚠ 被将军':'';
+  el.textContent=tn+'走棋'+ck+(extra?' · '+extra:'');
+}
+
+function showDialog(t,m){
+  document.getElementById('dialogTitle').textContent=t;
+  document.getElementById('dialogMsg').textContent=m;
+  document.getElementById('overlay').className='overlay show';
+}
+function closeDialog(){document.getElementById('overlay').className='overlay';}
+
+function setMode(m){
+  mode=m;
+  document.getElementById('btnPvP').className='mode-btn'+(m==='pvp'?' active':'');
+  document.getElementById('btnPvE').className='mode-btn'+(m==='pve'?' active':'');
+  restartGame();
+}
+
+function restartGame(){
+  closeDialog();
+  initBoard();
+  drawAll();
+  updateTurnDot();
+  updateStatus('');
+}
+
+/* ═══════════════════════════════════════════
+   BOOT
+   ═══════════════════════════════════════════ */
+window.addEventListener('resize',resize);
+initBoard();
+resize();
+</script>
+</body>
+</html>
